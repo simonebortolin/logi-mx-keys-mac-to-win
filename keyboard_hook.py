@@ -12,12 +12,16 @@ VK_RMENU = 0xA5  # Right Alt
 VK_LCONTROL = 0xA2
 VK_Q = 0x51
 VK_VOLUME_UP = 0xAF
+VK_OEM_5 = 0xDC    # Key left of "1" on ISO PC layout (\| on Italian layout)
+VK_OEM_102 = 0xE2  # Key right of Left Shift on ISO PC layout (<> on Italian layout)
 
 # Scan codes
 SC_LWIN = 0x5B
 SC_RWIN = 0x5C
 SC_LALT = 0x38
 SC_RALT = 0x38
+SC_OEM_5 = 0x29
+SC_OEM_102 = 0x56
 
 # Hook constants
 WH_KEYBOARD_LL = 13
@@ -200,6 +204,17 @@ class KeyboardHook:
             # Right Alt -> Right Win
             if vk == VK_RMENU:
                 send_key(VK_RWIN, SC_RWIN, is_up, extended=True)
+                return 1
+
+            # Mac ISO keyboards swap these two keys vs. PC ISO:
+            # \| key -> <> key
+            if vk == VK_OEM_5:
+                send_key(VK_OEM_102, SC_OEM_102, is_up, extended=False)
+                return 1
+
+            # <> key -> \| key
+            if vk == VK_OEM_102:
+                send_key(VK_OEM_5, SC_OEM_5, is_up, extended=False)
                 return 1
 
         return user32.CallNextHookEx(self._hook, nCode, wParam, lParam)

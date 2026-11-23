@@ -66,6 +66,8 @@ The app runs in the **system tray** (bottom-right of your taskbar):
 | Option (⌥) | Alt | Win key |
 | fn + Lock key | Win+Ctrl+Q (nothing) | Volume Up |
 | fn + F12 | Volume Down | Volume Down (unchanged) |
+| Key left of 1 (ISO) | `<>` | `\|` |
+| Key right of Left Shift (ISO) | `\|` | `<>` |
 
 ## Configuration
 
