@@ -55,7 +55,7 @@ The app runs in the **system tray** (bottom-right of your taskbar):
 
 - **Swap Keys: ON/OFF** — manual toggle (double-click also works)
 - **Auto (MX KEYS S MAC): ON/OFF** — auto-enable based on Bluetooth connection
-- **Start with Windows: ON/OFF** — launch automatically on login
+- **Start with Windows: ON/OFF** — launch automatically on login (Scheduled Task, asks for admin rights)
 - **Quit**
 
 ## Key Mappings
@@ -83,19 +83,35 @@ The app auto-detects the **MX KEYS S MAC** keyboard by default. To use with a di
    }
    ```
 
+### USB receiver (Unifying / Bolt)
+
+If the keyboard connects through a Logitech USB receiver instead of Bluetooth, add the receiver's ID to `usb_receiver_ids`. The swap turns on while a keyboard behind that receiver is present:
+
+```json
+"usb_receiver_ids": ["VID_046D&PID_C52B"]
+```
+
+Common IDs: `VID_046D&PID_C52B` (Unifying), `VID_046D&PID_C548` (Bolt). To find yours, look for `VID_046D` in Device Manager → Keyboards → Properties → Details → Device instance path. The receiver can't tell whether the keyboard itself is switched on, so the swap stays on as long as the receiver is plugged in.
+
 ## How It Works
 
 - Uses a **low-level keyboard hook** (`WH_KEYBOARD_LL`) to intercept and remap keys before any application sees them
 - Detects Bluetooth connectivity by checking the **HID Keyboard child device** status via Windows PnP (the BLE parent device always reports "OK" even when disconnected)
-- Runs with minimal overhead — the Bluetooth check polls every 5 seconds via PowerShell
+- Detects USB receivers by checking for a present, working HID keyboard under the configured receiver IDs
+- Runs with minimal overhead — the connection check polls every 5 seconds via PowerShell
 
 ## Start with Windows
 
-Toggle "Start with Windows" from the tray menu. This creates a small VBScript launcher in your Windows Startup folder — no registry changes needed. To remove manually:
+KeySwitcher starts at logon through a Scheduled Task named `KeySwitcher`. The task runs elevated (so the remapping also works in admin windows) and restarts automatically if it crashes. A real Windows service can't be used, because services run in session 0 and can't hook the keyboard or show a tray icon.
 
+Turn it on or off with "Start with Windows" in the tray menu (Windows asks for admin rights), or from a terminal:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-service.ps1             # install and start
+powershell -ExecutionPolicy Bypass -File .\install-service.ps1 -Uninstall  # stop and remove
 ```
-del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\KeySwitcher.vbs"
-```
+
+Installing also deletes the `KeySwitcher.vbs` Startup-folder launcher left by older versions.
 
 ## License
 

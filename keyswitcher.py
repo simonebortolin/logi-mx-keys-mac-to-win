@@ -17,6 +17,9 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "bt_device_name": "MX KEYS S MAC",
+    # USB receivers the keyboard may be paired with (e.g. Logitech Unifying
+    # "VID_046D&PID_C52B" or Bolt "VID_046D&PID_C548"). Swap turns on while one is plugged in.
+    "usb_receiver_ids": [],
     "auto_detect": True,
     "poll_interval_seconds": 5,
 }
@@ -66,12 +69,13 @@ _bt_address_cache: dict[str, str | None] = {}
 
 def is_bt_device_connected(device_name: str) -> bool:
     """Check if a BT keyboard is actually connected by checking its HID child device."""
-    if device_name not in _bt_address_cache:
-        _bt_address_cache[device_name] = _get_bt_address(device_name)
-
-    bt_addr = _bt_address_cache[device_name]
+    bt_addr = _bt_address_cache.get(device_name)
     if not bt_addr:
-        return False
+        # Not cached on failure: at logon the BT stack may not be ready yet
+        bt_addr = _get_bt_address(device_name)
+        if not bt_addr:
+            return False
+        _bt_address_cache[device_name] = bt_addr
 
     try:
         result = subprocess.run(
@@ -85,6 +89,32 @@ def is_bt_device_connected(device_name: str) -> bool:
         return result.stdout.strip() == "OK"
     except Exception:
         return False
+
+
+def is_usb_receiver_connected(receiver_ids: list[str]) -> bool:
+    """Check if a keyboard behind one of the given USB receivers is present and working."""
+    if not receiver_ids:
+        return False
+    patterns = ",".join(f"'HID\\{rid}*'" for rid in receiver_ids)
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-Command",
+                f"(Get-PnpDevice -Class Keyboard -PresentOnly -InstanceId {patterns}"
+                f" -ErrorAction SilentlyContinue).Status",
+            ],
+            capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return "OK" in result.stdout.split()
+    except Exception:
+        return False
+
+
+def is_keyboard_connected(config: dict) -> bool:
+    """True if the Mac keyboard is reachable via Bluetooth or a configured USB receiver."""
+    return (is_usb_receiver_connected(config.get("usb_receiver_ids", []))
+            or is_bt_device_connected(config["bt_device_name"]))
 
 
 def create_icon_image(active: bool, auto: bool = False) -> Image.Image:
@@ -118,35 +148,36 @@ def create_icon_image(active: bool, auto: bool = False) -> Image.Image:
 
 # --- Startup management ---
 
-def _get_startup_folder():
-    return os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
+# Startup is handled by the "KeySwitcher" Scheduled Task (see install-service.ps1).
 
-
-def _get_vbs_path():
-    return os.path.join(_get_startup_folder(), "KeySwitcher.vbs")
+TASK_NAME = "KeySwitcher"
+_INSTALL_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "install-service.ps1")
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW
 
 
 def is_startup_enabled():
-    return os.path.exists(_get_vbs_path())
+    result = subprocess.run(
+        ["schtasks", "/Query", "/TN", TASK_NAME],
+        capture_output=True, creationflags=_NO_WINDOW,
+    )
+    return result.returncode == 0
+
+
+def _run_install_script(*extra_args):
+    """Run install-service.ps1 (it asks for admin rights via UAC)."""
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+         "-File", _INSTALL_SCRIPT, "-FromApp", *extra_args],
+        creationflags=_NO_WINDOW,
+    )
 
 
 def enable_startup():
-    """Create a VBScript in the Startup folder that launches keyswitcher silently."""
-    script_path = os.path.abspath(__file__)
-    python_path = sys.executable
-    vbs_content = (
-        f'Set WshShell = CreateObject("WScript.Shell")\n'
-        f'WshShell.Run """{python_path}"" ""{script_path}""", 0, False\n'
-    )
-    vbs_path = _get_vbs_path()
-    with open(vbs_path, "w") as f:
-        f.write(vbs_content)
+    _run_install_script()
 
 
 def disable_startup():
-    vbs_path = _get_vbs_path()
-    if os.path.exists(vbs_path):
-        os.remove(vbs_path)
+    _run_install_script("-Uninstall")
 
 
 class KeySwitcherApp:
@@ -193,7 +224,7 @@ class KeySwitcherApp:
         self._auto_mode = not self._auto_mode
         if self._auto_mode:
             # Immediately check current state
-            connected = is_bt_device_connected(self.config["bt_device_name"])
+            connected = is_keyboard_connected(self.config)
             self._set_active(connected)
         self._update_icon()
 
@@ -207,7 +238,7 @@ class KeySwitcherApp:
         """Background thread that polls Bluetooth device status."""
         while self._running:
             if self._auto_mode:
-                connected = is_bt_device_connected(self.config["bt_device_name"])
+                connected = is_keyboard_connected(self.config)
                 if connected != self._active:
                     self._set_active(connected)
             time.sleep(self.config.get("poll_interval_seconds", 5))
@@ -227,7 +258,7 @@ class KeySwitcherApp:
         self._bt_poll_thread.start()
 
         # Check keyboard state immediately on startup
-        connected = is_bt_device_connected(self.config["bt_device_name"])
+        connected = is_keyboard_connected(self.config)
         self._set_active(connected)
 
         device_name = self.config["bt_device_name"]
